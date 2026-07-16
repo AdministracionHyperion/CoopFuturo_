@@ -42,10 +42,15 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path):
     ops_store._DB_PATH = None
     ops_store.init_db()
 
+    from datetime import time
+
     from pilot_core.modules.compliance.service import compliance_service
 
     compliance_service.suppressed.clear()
     compliance_service._hydrated = False
+    # Avoid flaky outside_contact_window failures outside 08:00–20:00 COT.
+    compliance_service.window_start = time(0, 0)
+    compliance_service.window_end = time(23, 59)
 
     from pilot_core.main import app
 
@@ -129,7 +134,13 @@ def test_handoff_respects_opt_out_before_liwa(
 def test_e2e_skips_voice_when_voz_disabled(client: TestClient) -> None:
     client.put(
         "/ops/settings",
-        json={"channels": {"voz_enabled": False, "whatsapp_enabled": True}},
+        json={
+            "channels": {
+                "voz_enabled": False,
+                "whatsapp_enabled": True,
+                "ventana_8_20": False,
+            }
+        },
     )
     r = client.post(
         "/ops/e2e/campaign",
@@ -141,7 +152,7 @@ def test_e2e_skips_voice_when_voz_disabled(client: TestClient) -> None:
             "skip_whatsapp": False,
         },
     )
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     assert r.json().get("ok") is True
     assert r.json()["steps"]["voice"].get("skipped") is True
 
@@ -149,7 +160,13 @@ def test_e2e_skips_voice_when_voz_disabled(client: TestClient) -> None:
 def test_e2e_blocks_whatsapp_when_channel_disabled(client: TestClient) -> None:
     client.put(
         "/ops/settings",
-        json={"channels": {"voz_enabled": True, "whatsapp_enabled": False}},
+        json={
+            "channels": {
+                "voz_enabled": True,
+                "whatsapp_enabled": False,
+                "ventana_8_20": False,
+            }
+        },
     )
     r = client.post(
         "/ops/e2e/campaign",
