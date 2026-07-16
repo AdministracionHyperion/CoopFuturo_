@@ -45,8 +45,7 @@ def humanize_conversation_row(row: dict[str, Any]) -> dict[str, Any]:
         out["tags"] = [
             t
             for t in tags
-            if str(t).lower() not in {"laboratorio", "liwa"}
-            and "elevenlabs" not in str(t).lower()
+            if str(t).lower() not in {"laboratorio", "liwa"} and "elevenlabs" not in str(t).lower()
         ]
     msgs = out.get("messages")
     if isinstance(msgs, list):
@@ -118,9 +117,7 @@ def record_outbound_conversation(
 
     if existing:
         tags = [
-            t
-            for t in (existing.get("tags") or [])
-            if str(t).lower() not in {"laboratorio", "liwa"}
+            t for t in (existing.get("tags") or []) if str(t).lower() not in {"laboratorio", "liwa"}
         ]
         if channel_label not in tags:
             tags = [channel_label, *tags]

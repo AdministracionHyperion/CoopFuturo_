@@ -13,8 +13,8 @@ from platform_kit.errors import PlatformError
 from pydantic import BaseModel, Field
 
 from pilot_core import ops_store
-from pilot_core.modules.agent_config.service import agent_config_service
 from pilot_core.modules.activity import humanize_conversation_row
+from pilot_core.modules.agent_config.service import agent_config_service
 from pilot_core.modules.analytics.service import analytics_service
 from pilot_core.modules.campaigns.service import campaigns_service
 from pilot_core.modules.compliance.service import compliance_service
@@ -126,9 +126,27 @@ def empty_dashboard() -> dict[str, Any]:
             {"key": "renovado", "label": "Renovado", "count": 0, "pct": 0},
         ],
         "baseStatus": [
-            {"key": "contactados", "label": "Contactados", "count": 0, "pct": 0, "color": "success"},
-            {"key": "no_contactados", "label": "No contactados", "count": 0, "pct": 0, "color": "muted"},
-            {"key": "no_disponibles", "label": "No disponibles", "count": 0, "pct": 0, "color": "warning"},
+            {
+                "key": "contactados",
+                "label": "Contactados",
+                "count": 0,
+                "pct": 0,
+                "color": "success",
+            },
+            {
+                "key": "no_contactados",
+                "label": "No contactados",
+                "count": 0,
+                "pct": 0,
+                "color": "muted",
+            },
+            {
+                "key": "no_disponibles",
+                "label": "No disponibles",
+                "count": 0,
+                "pct": 0,
+                "color": "warning",
+            },
             {"key": "rechazados", "label": "Rechazados", "count": 0, "pct": 0, "color": "danger"},
             {"key": "otros", "label": "Otros", "count": 0, "pct": 0, "color": "info"},
         ],

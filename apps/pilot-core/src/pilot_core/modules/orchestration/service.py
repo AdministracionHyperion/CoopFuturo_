@@ -8,7 +8,7 @@ from uuid import uuid4
 import httpx
 
 from pilot_core import ops_store
-from pilot_core.modules.activity import record_outbound_conversation, human_voice_status
+from pilot_core.modules.activity import human_voice_status, record_outbound_conversation
 from pilot_core.modules.campaigns.service import campaigns_service
 from pilot_core.modules.compliance.service import compliance_service
 from pilot_core.modules.elevenlabs_outbound import place_sip_outbound
@@ -94,7 +94,9 @@ class OrchestrationService:
                     **payload,
                 }
                 ops_store.insert_dispatch(entry)
-                self._record_inbox(phone=phone, first_name=first_name, status=entry["status"], mode="live_dialer")
+                self._record_inbox(
+                    phone=phone, first_name=first_name, status=entry["status"], mode="live_dialer"
+                )
                 if campaign_id and resp.is_success:
                     campaigns_service.bump_contacted(campaign_id)
                 return {

@@ -56,13 +56,10 @@ def _audit(
             "whatsapp": entry,
         }
     )
-    snippet = (
-        str(entry.get("text") or "").strip()
-        or (
-            "Flujo WhatsApp enviado"
-            if str(entry.get("kind") or "") == "flow"
-            else "Mensaje WhatsApp enviado"
-        )
+    snippet = str(entry.get("text") or "").strip() or (
+        "Flujo WhatsApp enviado"
+        if str(entry.get("kind") or "") == "flow"
+        else "Mensaje WhatsApp enviado"
     )
     record_outbound_conversation(
         phone=phone,

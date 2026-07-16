@@ -48,7 +48,8 @@ class WhatsAppMockService:
             phone=phone,
             first_name=first_name or "Asociado",
             channel="whatsapp",
-            snippet=text[:160] or (f"Plantilla WhatsApp · {template}" if template else "Mensaje WhatsApp encolado"),
+            snippet=text[:160]
+            or (f"Plantilla WhatsApp · {template}" if template else "Mensaje WhatsApp encolado"),
             topic="WhatsApp",
         )
         return {

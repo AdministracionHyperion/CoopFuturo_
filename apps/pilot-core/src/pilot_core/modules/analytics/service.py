@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pilot_core import ops_store
@@ -16,9 +16,7 @@ def _is_whatsapp(d: dict[str, Any]) -> bool:
     channel = str(d.get("channel") or "").lower()
     if "whatsapp" in mode or channel == "whatsapp":
         return True
-    if isinstance(d.get("whatsapp"), dict):
-        return True
-    return False
+    return bool(isinstance(d.get("whatsapp"), dict))
 
 
 def _is_voice(d: dict[str, Any]) -> bool:
@@ -27,12 +25,12 @@ def _is_voice(d: dict[str, Any]) -> bool:
 
 def _weekday_label(created_at: str | None) -> str:
     if not created_at:
-        return _DAY_LABELS[datetime.now(timezone.utc).weekday()]
+        return _DAY_LABELS[datetime.now(UTC).weekday()]
     raw = created_at.replace("Z", "+00:00")
     try:
         dt = datetime.fromisoformat(raw)
     except ValueError:
-        return _DAY_LABELS[datetime.now(timezone.utc).weekday()]
+        return _DAY_LABELS[datetime.now(UTC).weekday()]
     return _DAY_LABELS[dt.weekday()]
 
 
@@ -50,7 +48,8 @@ class AnalyticsService:
         ok_voice = sum(
             1
             for d in dispatches
-            if _is_voice(d) and str(d.get("status") or "") in {"sent", "queued_mock", "ok", "success"}
+            if _is_voice(d)
+            and str(d.get("status") or "") in {"sent", "queued_mock", "ok", "success"}
         )
         total = max(len(dispatches), 1)
         contact_rate = round(100 * (voice + wa) / total, 1) if dispatches else 0.0
