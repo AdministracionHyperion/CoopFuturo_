@@ -61,9 +61,9 @@ export function StatCard({
         className
       )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-xs text-[var(--muted)]">{label}</p>
-        <Info className="size-[14px] text-[var(--muted)]" strokeWidth={1.75} aria-hidden />
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <p className="min-w-0 truncate text-xs text-[var(--muted)]">{label}</p>
+        <Info className="size-[14px] shrink-0 text-[var(--muted)]" strokeWidth={1.75} aria-hidden />
       </div>
       <div className="mt-2 flex items-baseline gap-1 text-2xl font-semibold text-[var(--accent)]">
         {typeof value === "number" ? <AnimatedNumber value={value} /> : value}

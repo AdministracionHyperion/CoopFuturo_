@@ -355,10 +355,15 @@ def list_dispatches(limit: int = 50) -> list[dict[str, Any]]:
         conn = _connect()
         try:
             rows = conn.execute(
-                "SELECT payload FROM dispatches ORDER BY created_at DESC LIMIT ?",
+                "SELECT payload, created_at FROM dispatches ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-            return [json.loads(r["payload"]) for r in rows]
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                item = json.loads(r["payload"])
+                item["_created_at"] = r["created_at"]
+                out.append(item)
+            return out
         finally:
             conn.close()
 
@@ -568,6 +573,51 @@ def get_post_call_by_conversation(conversation_id: str) -> dict[str, Any] | None
                 (conversation_id,),
             ).fetchone()
             return json.loads(row["payload"]) if row else None
+        finally:
+            conn.close()
+
+
+def list_post_calls(limit: int = 100) -> list[dict[str, Any]]:
+    init_db()
+    with _LOCK:
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                "SELECT payload, created_at FROM post_calls ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                item = json.loads(r["payload"])
+                item["_created_at"] = r["created_at"]
+                out.append(item)
+            return out
+        finally:
+            conn.close()
+
+
+def upsert_post_call_payload(entry: dict[str, Any]) -> dict[str, Any]:
+    """Update an existing post_call row by id (or insert)."""
+    init_db()
+    if "id" not in entry:
+        entry["id"] = f"pc_{uuid4().hex[:10]}"
+    with _LOCK:
+        conn = _connect()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO post_calls(id, conversation_id, phone, payload)
+                VALUES(?, ?, ?, ?)
+                """,
+                (
+                    entry["id"],
+                    entry.get("conversation_id") or "",
+                    entry.get("phone") or "",
+                    json.dumps(entry, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+            return entry
         finally:
             conn.close()
 

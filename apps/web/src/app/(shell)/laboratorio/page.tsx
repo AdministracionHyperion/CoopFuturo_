@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { ChartCard } from "@/components/data/chart-card";
@@ -19,6 +20,9 @@ import {
   uploadDocument,
 } from "@/services/ops-client";
 import { toast } from "sonner";
+import { sanitizeOpsCopy } from "@/lib/sanitize-ops-copy";
+
+const OPS_QUERY_KEYS = ["dashboard", "conversations", "campaigns", "crm", "handoff"] as const;
 
 function parseCsv(text: string): Record<string, string>[] {
   const lines = text.trim().split(/\r?\n/);
@@ -35,6 +39,7 @@ function parseCsv(text: string): Record<string, string>[] {
 }
 
 export default function LaboratorioPage() {
+  const queryClient = useQueryClient();
   const [phone, setPhone] = useState("+573001112233");
   const [name, setName] = useState("Ana Demo");
   const [flow, setFlow] = useState<"A" | "B">("A");
@@ -58,6 +63,12 @@ export default function LaboratorioPage() {
   const [agencyTag, setAgencyTag] = useState("RENOVACION_VIP");
   const [skipVoiceE2E, setSkipVoiceE2E] = useState(true);
   const [postIntent, setPostIntent] = useState("interesado");
+
+  function refreshOpsViews() {
+    for (const key of OPS_QUERY_KEYS) {
+      void queryClient.invalidateQueries({ queryKey: [key] });
+    }
+  }
 
   useEffect(() => {
     setAgencyTag(flow === "B" ? "REACTIVACION_VIP" : "RENOVACION_VIP");
@@ -103,11 +114,12 @@ export default function LaboratorioPage() {
     try {
       const res = await orchestrationAttempt({ phone, first_name: name, flow });
       setLastResult(JSON.stringify(res, null, 2));
-      toast.success(res.mock_commercial ? "Orquestación mock OK" : "Orquestación live OK", {
-        description: String(res.dispatch?.id ?? "ok"),
+      refreshOpsViews();
+      toast.success(res.mock_commercial ? "Llamada encolada (demo)" : "Llamada disparada", {
+        description: "Revisa Conversaciones y el Dashboard",
       });
     } catch (err) {
-      toast.error("Falló la orquestación", {
+      toast.error("Falló la llamada", {
         description: err instanceof Error ? err.message : "Error",
       });
     } finally {
@@ -120,6 +132,7 @@ export default function LaboratorioPage() {
     try {
       const res = await orchestrationBatch({ flow, limit: batchLimit });
       setLastResult(JSON.stringify(res, null, 2));
+      refreshOpsViews();
       toast.success("Batch terminado", {
         description: `ok=${res.sent_or_queued} bloqueados=${res.blocked} total=${res.total}`,
       });
@@ -143,10 +156,11 @@ export default function LaboratorioPage() {
         first_name: name,
       });
       setLastResult(JSON.stringify(res, null, 2));
+      refreshOpsViews();
       const live = !res.mock_commercial;
       const kindLabel = res.message?.kind === "flow" ? "flujo" : "texto";
-      toast.success(live ? `WhatsApp LIWA (${kindLabel})` : "WhatsApp mock encolado", {
-        description: String(res.message?.id ?? res.message?.status ?? "ok"),
+      toast.success(live ? `WhatsApp enviado (${kindLabel})` : "WhatsApp encolado (demo)", {
+        description: "Visible en Conversaciones",
       });
     } catch (err) {
       toast.error("Falló WhatsApp", {
@@ -168,9 +182,9 @@ export default function LaboratorioPage() {
         agency_tag: agencyTag || undefined,
       });
       setLastResult(JSON.stringify(res, null, 2));
-      const liwa = res.liwa as Record<string, unknown> | undefined;
+      const synced = (res.liwa as Record<string, unknown> | undefined)?.synced;
       toast.success("Handoff creado", {
-        description: liwa?.synced ? `LIWA tag ${String(liwa.tag_name ?? agencyTag)}` : String(res.id),
+        description: synced ? `Tag agencia: ${agencyTag || "ok"}` : String(res.id),
       });
     } catch (err) {
       toast.error("Falló handoff", {
@@ -262,6 +276,7 @@ export default function LaboratorioPage() {
         flow,
       });
       setLastResult(JSON.stringify(res, null, 2));
+      refreshOpsViews();
       toast.success(
         res.whatsapp_sent
           ? `Post-llamada ${res.flow ?? flow} → WhatsApp`
@@ -291,6 +306,7 @@ export default function LaboratorioPage() {
         agency_tag: agencyTag || undefined,
       });
       setLastResult(JSON.stringify(res, null, 2));
+      refreshOpsViews();
       const ok = res.ok !== false;
       if (ok) {
         toast.success(`E2E Flujo ${res.flow ?? flow} OK`, { description: phone });
@@ -311,7 +327,7 @@ export default function LaboratorioPage() {
     try {
       const res = await lookupAssociate(docId);
       setLastResult(JSON.stringify(res, null, 2));
-      toast.message(res.mock_commercial ? "Core lookup (stub)" : "Core lookup (HTTP)", {
+      toast.message(res.mock_commercial ? "Consulta core (demo)" : "Consulta core OK", {
         description: docId,
       });
     } catch (err) {
@@ -327,8 +343,13 @@ export default function LaboratorioPage() {
     <div>
       <PageHeader
         title="Laboratorio"
-        subtitle="Import, voz, batch, documentos, WhatsApp LIWA, handoff y opt-out contra pilot-core."
+        subtitle="Prueba import, voz, batch, documentos, WhatsApp, handoff y opt-out."
       />
+
+      <div className="mb-4 rounded-xl border border-[var(--warning)]/40 bg-[var(--warning)]/10 px-4 py-3 text-sm text-[var(--text)]">
+        Uso interno · estas acciones pueden disparar voz/WhatsApp reales según configuración. No
+        uses números de asociados reales sin autorización.
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard title="Voz · orquestación">
@@ -404,7 +425,7 @@ export default function LaboratorioPage() {
               Simular post-llamada → WA
             </Button>
             <label className="block text-sm">
-              Tag LIWA handoff
+              Tag de handoff (agencia)
               <input
                 className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
                 value={agencyTag}
@@ -426,7 +447,7 @@ export default function LaboratorioPage() {
           </div>
         </ChartCard>
 
-        <ChartCard title={waLive ? "WhatsApp LIWA (live)" : "WhatsApp mock"}>
+        <ChartCard title={waLive ? "WhatsApp (live)" : "WhatsApp (demo)"}>
           <div className="space-y-3 p-1">
             <div className="flex flex-wrap gap-2">
               <Button
@@ -469,16 +490,16 @@ export default function LaboratorioPage() {
             <Button onClick={onWhatsApp} disabled={busy}>
               {waLive
                 ? waKind === "flow"
-                  ? "Enviar flujo LIWA"
-                  : "Enviar texto LIWA"
-                : "Enviar WhatsApp mock"}
+                  ? "Enviar flujo WhatsApp"
+                  : "Enviar texto WhatsApp"
+                : "Enviar WhatsApp (demo)"}
             </Button>
             <p className="text-xs text-[var(--muted)]">
               {waLive
                 ? waKind === "flow"
                   ? "Outbound frío: usa flujo con plantilla Meta (recomendado)."
                   : "Texto libre solo si el contacto escribió en las últimas 24h."
-                : "Modo mock: define LIWA_MODE=real y LIWA_API_TOKEN en el entorno de la API."}
+                : "Modo demo: el canal WhatsApp live se activa desde configuración del API."}
             </p>
           </div>
         </ChartCard>
@@ -534,7 +555,7 @@ export default function LaboratorioPage() {
 
       {lastResult ? (
         <pre className="mt-4 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-xs">
-          {lastResult}
+          {sanitizeOpsCopy(lastResult)}
         </pre>
       ) : null}
     </div>

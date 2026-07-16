@@ -13,7 +13,7 @@ async function getJson<T>(path: string): Promise<T> {
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`pilot-core ${path} → HTTP ${res.status}`);
+    throw new Error(`API ${path} → HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
 }

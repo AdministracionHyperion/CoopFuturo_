@@ -1,0 +1,17 @@
+# Traefik for pulso-lab only — ignores other compose projects on the host.
+api:
+  dashboard: false
+
+entryPoints:
+  web:
+    address: ":80"
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: pulso_lab_app
+    constraints: "Label(`com.docker.compose.project`,`pulso-lab`)"
+
+log:
+  level: INFO

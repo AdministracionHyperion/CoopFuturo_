@@ -1,6 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  Phone,
+  MessageCircle,
+  Radio,
+  Bot,
+  Shield,
+  Eye,
+  Cable,
+} from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +18,15 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { fetchSettings, saveSettings } from "@/services/ops-client";
 
-const TABS = ["Canales", "Dialer", "Agentes", "Cumplimiento", "Privacidad"];
+const TABS = [
+  { id: "Canales", icon: Phone },
+  { id: "Dialer", icon: Cable },
+  { id: "Agentes", icon: Bot },
+  { id: "Cumplimiento", icon: Shield },
+  { id: "Privacidad", icon: Eye },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
 
 type Channels = {
   voz_enabled: boolean;
@@ -32,8 +49,39 @@ type AgentFlow = {
   channel?: string;
 };
 
+function Toggle({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onChange}
+      className={cn(
+        "relative h-7 w-12 shrink-0 rounded-full transition-colors",
+        checked ? "bg-[var(--accent)]" : "bg-white/15",
+      )}
+    >
+      <span
+        className={cn(
+          "absolute top-0.5 size-6 rounded-full bg-white shadow transition-transform",
+          checked ? "left-5" : "left-0.5",
+        )}
+      />
+    </button>
+  );
+}
+
 export default function ConfiguracionPage() {
-  const [tab, setTab] = useState("Canales");
+  const [tab, setTab] = useState<TabId>("Canales");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [channels, setChannels] = useState<Channels>({
@@ -107,7 +155,7 @@ export default function ConfiguracionPage() {
         },
         ui: { pii_masking: piiMasking },
       });
-      toast.success("Configuración guardada en SQLite");
+      toast.success("Configuración guardada");
     } catch (err) {
       toast.error("No se pudo guardar", {
         description: err instanceof Error ? err.message : "Error",
@@ -121,28 +169,31 @@ export default function ConfiguracionPage() {
     <div>
       <PageHeader
         title="Configuración de la plataforma"
-        subtitle="Canales, dialer HTTP y agentes — persistido en pilot-core."
-      />
-
-      <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-[var(--border)] pb-3">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            className={cn(
-              "rounded-lg px-3 py-1.5 text-sm",
-              tab === t ? "bg-[var(--accent-dim)] text-[var(--accent)]" : "text-[var(--muted)]",
-            )}
-          >
-            {t}
-          </button>
-        ))}
-        <div className="ml-auto">
+        subtitle="Canales, dialer y agentes."
+        actions={
           <Button size="sm" onClick={onSave} disabled={saving || loading}>
             {saving ? "Guardando…" : "Guardar"}
           </Button>
-        </div>
+        }
+      />
+
+      <div className="mb-6 flex flex-wrap gap-2">
+        {TABS.map(({ id, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm transition",
+              tab === id
+                ? "border-[var(--accent)]/40 bg-[var(--accent-dim)] text-[var(--accent)]"
+                : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--text)]",
+            )}
+          >
+            <Icon className="size-4 shrink-0" strokeWidth={1.75} />
+            <span className="truncate">{id}</span>
+          </button>
+        ))}
       </div>
 
       {loading ? (
@@ -150,81 +201,101 @@ export default function ConfiguracionPage() {
       ) : null}
 
       {tab === "Canales" && !loading && (
-        <div className="grid gap-4 md:grid-cols-2">
-          <ChartCard title="Canales activos">
-            <ul className="space-y-4">
-              {(
-                [
-                  ["voz_enabled", "Línea de voz"],
-                  [
-                    "whatsapp_enabled",
-                    waMode === "real" ? "WhatsApp (LIWA live)" : "WhatsApp (mock)",
-                  ],
-                ] as const
-              ).map(([key, label]) => (
-                <li key={key} className="flex items-center justify-between gap-4">
-                  <span className="text-sm">{label}</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={channels[key]}
-                    onClick={() => setChannels((c) => ({ ...c, [key]: !c[key] }))}
+        <div className="mx-auto max-w-3xl space-y-3">
+          <div className="flex w-full items-center gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+            <span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--accent-dim)] text-[var(--accent)]">
+              <Phone className="size-5" strokeWidth={1.75} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-base font-semibold">Línea de voz</p>
+              <p className="mt-0.5 truncate text-sm text-[var(--muted)]">
+                {dialer.default_phone_number_id
+                  ? `DDI: ${dialer.default_phone_number_id}`
+                  : "Sin phone number ID — configúralo en Dialer / Agentes"}
+              </p>
+              <p className="mt-2 inline-flex items-center gap-2 text-sm">
+                <span className="text-[var(--muted)]">Estado</span>
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5",
+                    channels.voz_enabled ? "text-[var(--accent)]" : "text-[var(--muted)]",
+                  )}
+                >
+                  <span
                     className={cn(
-                      "relative h-6 w-11 rounded-full transition-colors",
-                      channels[key] ? "bg-[var(--accent)]" : "bg-white/15",
+                      "size-2 rounded-full",
+                      channels.voz_enabled ? "bg-[var(--accent)] shadow-[0_0_8px_var(--accent)]" : "bg-white/25",
                     )}
-                  >
-                    <span
-                      className={cn(
-                        "absolute top-0.5 size-5 rounded-full bg-white transition-transform",
-                        channels[key] ? "left-5" : "left-0.5",
-                      )}
-                    />
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-4 text-xs text-[var(--muted)]">
-              {waMode === "real"
-                ? "WhatsApp LIWA live activo (LIWA_MODE=real). Voz live vía ElevenLabs SIP o Dialer URL."
-                : "WhatsApp en mock hasta LIWA_MODE=real + LIWA_API_TOKEN. Voz live requiere Dialer/ElevenLabs."}
-            </p>
-          </ChartCard>
-          <ChartCard title="Estado">
-            <ul className="space-y-2 text-sm text-[var(--muted)]">
-              <li className="flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-[var(--accent)]" />
-                Dialer: {dialer.base_url ? "URL configurada" : "vacío → ElevenLabs SIP / mock"}
-              </li>
-              <li className="flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-[var(--accent)]" />
-                WhatsApp: {waMode === "real" ? "LIWA live" : "modo mock"}
-              </li>
-              <li className="flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-[var(--accent)]" />
-                Auth: deshabilitada en development
-              </li>
-            </ul>
-          </ChartCard>
+                  />
+                  {channels.voz_enabled ? "Habilitada" : "Deshabilitada"}
+                </span>
+              </p>
+            </div>
+            <Toggle
+              checked={channels.voz_enabled}
+              label="Voz"
+              onChange={() => setChannels((c) => ({ ...c, voz_enabled: !c.voz_enabled }))}
+            />
+          </div>
+
+          <div className="flex w-full items-center gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+            <span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--accent-dim)] text-[var(--accent)]">
+              <MessageCircle className="size-5" strokeWidth={1.75} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-base font-semibold">WhatsApp</p>
+              <p className="mt-0.5 truncate text-sm text-[var(--muted)]">
+                {waMode === "real"
+                  ? "Canal WhatsApp en vivo"
+                  : "Canal WhatsApp en modo demo"}
+              </p>
+              <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                <Badge tone={waMode === "real" ? "success" : "muted"}>
+                  {waMode === "real" ? "Live" : "Demo"}
+                </Badge>
+              </p>
+            </div>
+            <Toggle
+              checked={channels.whatsapp_enabled}
+              label="WhatsApp"
+              onChange={() =>
+                setChannels((c) => ({ ...c, whatsapp_enabled: !c.whatsapp_enabled }))
+              }
+            />
+          </div>
+
+          <div className="flex w-full items-center gap-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4">
+            <span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--accent-dim)] text-[var(--accent)]">
+              <Radio className="size-5" strokeWidth={1.75} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-base font-semibold">Dialer / SIP</p>
+              <p className="mt-0.5 truncate text-sm text-[var(--muted)]">
+                {dialer.base_url
+                  ? dialer.base_url
+                  : "Sin URL — voz por troncal SIP directa"}
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
       {tab === "Dialer" && !loading && (
         <ChartCard title="Microservicio dialer">
           <div className="space-y-3 p-1">
-            <label className="block text-sm">
-              Base URL (vacío = orquestación mock)
+            <label className="block min-w-0 text-sm">
+              Base URL (vacío = troncal SIP directa)
               <input
-                className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm"
+                className="mt-1 w-full min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm"
                 placeholder="http://127.0.0.1:8080"
                 value={dialer.base_url}
                 onChange={(e) => setDialer((d) => ({ ...d, base_url: e.target.value }))}
               />
             </label>
-            <label className="block text-sm">
+            <label className="block min-w-0 text-sm">
               Phone number ID por defecto
               <input
-                className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm"
+                className="mt-1 w-full min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm"
                 value={dialer.default_phone_number_id}
                 onChange={(e) =>
                   setDialer((d) => ({ ...d, default_phone_number_id: e.target.value }))
@@ -232,9 +303,8 @@ export default function ConfiguracionPage() {
               />
             </label>
             <p className="text-xs text-[var(--muted)]">
-              Al guardar, pilot-core hace hot-patch y llama{" "}
-              <code className="text-[var(--accent)]">POST /internal/dialer/calls/dispatch</code> si
-              hay URL.
+              Al guardar, la API actualiza el dialer en caliente. Si hay URL, usa el endpoint de
+              despacho interno.
             </p>
           </div>
         </ChartCard>
@@ -254,26 +324,26 @@ export default function ConfiguracionPage() {
               toolbar={<Badge tone="muted">{flow.segment || "—"}</Badge>}
             >
               <div className="space-y-3">
-                <label className="block text-sm">
+                <label className="block min-w-0 text-sm">
                   Nombre
                   <input
-                    className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
+                    className="mt-1 w-full min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
                     value={flow.name ?? ""}
                     onChange={(e) => setFlow({ ...flow, name: e.target.value })}
                   />
                 </label>
-                <label className="block text-sm">
-                  Agent ID (ElevenLabs)
+                <label className="block min-w-0 text-sm">
+                  ID del agente de voz
                   <input
-                    className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-xs"
+                    className="mt-1 w-full min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-xs"
                     value={flow.agent_id ?? ""}
                     onChange={(e) => setFlow({ ...flow, agent_id: e.target.value })}
                   />
                 </label>
-                <label className="block text-sm">
+                <label className="block min-w-0 text-sm">
                   Phone number ID
                   <input
-                    className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-xs"
+                    className="mt-1 w-full min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-xs"
                     value={flow.phone_number_id ?? ""}
                     onChange={(e) => setFlow({ ...flow, phone_number_id: e.target.value })}
                   />
@@ -294,29 +364,17 @@ export default function ConfiguracionPage() {
                 ["identificacion", "Identificación como asistente virtual"],
               ] as const
             ).map(([key, label]) => (
-              <li key={key} className="flex items-center justify-between gap-4">
-                <span className="text-sm">{label}</span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={channels[key]}
-                  onClick={() => setChannels((c) => ({ ...c, [key]: !c[key] }))}
-                  className={cn(
-                    "relative h-6 w-11 rounded-full transition-colors",
-                    channels[key] ? "bg-[var(--accent)]" : "bg-white/15",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "absolute top-0.5 size-5 rounded-full bg-white transition-transform",
-                      channels[key] ? "left-5" : "left-0.5",
-                    )}
-                  />
-                </button>
+              <li key={key} className="flex min-w-0 items-center justify-between gap-4">
+                <span className="min-w-0 truncate text-sm">{label}</span>
+                <Toggle
+                  checked={channels[key]}
+                  label={label}
+                  onChange={() => setChannels((c) => ({ ...c, [key]: !c[key] }))}
+                />
               </li>
             ))}
-            <li className="flex items-center justify-between text-sm">
-              <span>Lista de exclusión (opt-out)</span>
+            <li className="flex min-w-0 items-center justify-between gap-4 text-sm">
+              <span className="min-w-0 truncate">Lista de exclusión (opt-out)</span>
               <Button
                 variant="outline"
                 size="sm"
@@ -338,41 +396,25 @@ export default function ConfiguracionPage() {
               </Button>
             </li>
           </ul>
-          <p className="mt-4 text-xs text-[var(--muted)]">
-            Desactivar la ventana permite orquestar fuera de 8–20 (solo demo local). Opt-outs
-            persisten en SQLite.
-          </p>
         </ChartCard>
       )}
 
       {tab === "Privacidad" && !loading && (
         <ChartCard title="Enmascarado de PII">
           <ul className="space-y-4">
-            <li className="flex items-center justify-between gap-4">
-              <div>
+            <li className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
                 <p className="text-sm">Enmascarar PII en lecturas Ops</p>
                 <p className="text-xs text-[var(--muted)]">
-                  Teléfonos, cédulas y nombres en GET /ops (CRM, handoff, conversaciones,
-                  contactos). Laboratorio sigue usando valores crudos para pruebas.
+                  Teléfonos, cédulas y nombres en GET /ops. Laboratorio usa valores crudos para
+                  pruebas.
                 </p>
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={piiMasking}
-                onClick={() => setPiiMasking((v) => !v)}
-                className={cn(
-                  "relative h-6 w-11 shrink-0 rounded-full transition-colors",
-                  piiMasking ? "bg-[var(--accent)]" : "bg-white/15",
-                )}
-              >
-                <span
-                  className={cn(
-                    "absolute top-0.5 size-5 rounded-full bg-white transition-transform",
-                    piiMasking ? "left-5" : "left-0.5",
-                  )}
-                />
-              </button>
+              <Toggle
+                checked={piiMasking}
+                label="PII masking"
+                onChange={() => setPiiMasking((v) => !v)}
+              />
             </li>
           </ul>
         </ChartCard>

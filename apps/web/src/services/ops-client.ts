@@ -12,7 +12,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`pilot-core ${path} → HTTP ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`API ${path} → HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -24,7 +24,7 @@ async function getJson<T>(path: string): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`pilot-core ${path} → HTTP ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`API ${path} → HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -37,7 +37,7 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`pilot-core ${path} → HTTP ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`API ${path} → HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
   return res.json() as Promise<T>;
 }
@@ -132,6 +132,16 @@ export async function completeCall(input: {
   }>("/ops/calls/complete", input);
 }
 
+export async function fetchPostCalls() {
+  return getJson<{ items: Record<string, unknown>[]; total: number }>("/ops/post-calls");
+}
+
+export async function postCallAction(postCallId: string, action: "approve" | "skip") {
+  return postJson<{ ok: boolean; item?: Record<string, unknown> }>(
+    `/ops/post-calls/${encodeURIComponent(postCallId)}/action`,
+    { action },
+  );
+}
 
 export async function optOut(phone: string) {
   return postJson<{ ok: boolean; phone: string }>("/ops/compliance/opt-out", { phone });
@@ -231,7 +241,7 @@ export async function uploadDocument(input: {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`pilot-core /ops/documents/upload → HTTP ${res.status}: ${text.slice(0, 200)}`);
+    throw new Error(`API /ops/documents/upload → HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
   return res.json() as Promise<{
     id: string;

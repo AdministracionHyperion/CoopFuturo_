@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from datetime import time
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -15,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from pilot_core import ops_store
 from pilot_core.modules.agent_config.service import agent_config_service
+from pilot_core.modules.activity import humanize_conversation_row
 from pilot_core.modules.analytics.service import analytics_service
 from pilot_core.modules.campaigns.service import campaigns_service
 from pilot_core.modules.compliance.service import compliance_service
@@ -32,13 +32,13 @@ from pilot_core.modules.pii import (
     pii_masking_enabled,
 )
 from pilot_core.modules.post_call.service import post_call_service, verify_elevenlabs_signature
+from pilot_core.modules.product_flow import resolve_product_flow
 from pilot_core.modules.segmentation.service import segmentation_service
 from pilot_core.modules.whatsapp_mock import whatsapp_mock_service
 from pilot_core.settings import get_settings
 
 router = APIRouter(prefix="/ops", tags=["ops-product"])
 
-_FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "ops"
 ops_store.init_db()
 
 
@@ -65,14 +65,135 @@ def _hydrate_runtime_from_store() -> None:
 _hydrate_runtime_from_store()
 
 
-def _load(name: str) -> dict[str, Any]:
-    path = _FIXTURES / name
-    return json.loads(path.read_text(encoding="utf-8"))
+def empty_dashboard() -> dict[str, Any]:
+    """Zero-filled dashboard shell so charts render without smoke/demo numbers."""
+    days = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+    zero_spark = [0, 0, 0, 0, 0, 0, 0]
+    return {
+        "kpis": [
+            {
+                "id": "contactabilidad",
+                "label": "Contactabilidad",
+                "value": 0,
+                "unit": "%",
+                "delta": 0,
+                "deltaUnit": "pp",
+                "sparkline": list(zero_spark),
+            },
+            {
+                "id": "conversacion",
+                "label": "Conversación completada",
+                "value": 0,
+                "unit": "%",
+                "delta": 0,
+                "deltaUnit": "pp",
+                "sparkline": list(zero_spark),
+            },
+            {
+                "id": "intencion",
+                "label": "Intención positiva",
+                "value": 0,
+                "unit": "%",
+                "delta": 0,
+                "deltaUnit": "pp",
+                "sparkline": list(zero_spark),
+            },
+            {
+                "id": "ordenes",
+                "label": "Órdenes recibidas",
+                "value": 0,
+                "unit": "",
+                "delta": 0,
+                "deltaUnit": "%",
+                "sparkline": list(zero_spark),
+            },
+            {
+                "id": "csat",
+                "label": "CSAT",
+                "value": 0,
+                "unit": "/5",
+                "delta": 0,
+                "deltaUnit": "",
+                "sparkline": list(zero_spark),
+            },
+        ],
+        "contactsByDay": [{"date": d, "voz": 0, "whatsapp": 0} for d in days],
+        "funnelRenovacion": [
+            {"key": "contactado", "label": "Contactado", "count": 0, "pct": 0},
+            {"key": "interesado", "label": "Interesado", "count": 0, "pct": 0},
+            {"key": "documento", "label": "Documento", "count": 0, "pct": 0},
+            {"key": "transferido", "label": "Transferido", "count": 0, "pct": 0},
+            {"key": "renovado", "label": "Renovado", "count": 0, "pct": 0},
+        ],
+        "baseStatus": [
+            {"key": "contactados", "label": "Contactados", "count": 0, "pct": 0, "color": "success"},
+            {"key": "no_contactados", "label": "No contactados", "count": 0, "pct": 0, "color": "muted"},
+            {"key": "no_disponibles", "label": "No disponibles", "count": 0, "pct": 0, "color": "warning"},
+            {"key": "rechazados", "label": "Rechazados", "count": 0, "pct": 0, "color": "danger"},
+            {"key": "otros", "label": "Otros", "count": 0, "pct": 0, "color": "info"},
+        ],
+        "ops": [
+            {"id": "llamadas", "label": "Dispatches voz", "value": "0"},
+            {"id": "wa", "label": "WhatsApp", "value": "0"},
+            {"id": "contactos", "label": "Contactos en store", "value": "0"},
+            {"id": "campanas", "label": "Campañas", "value": "0"},
+            {"id": "handoffs", "label": "Handoffs", "value": "0"},
+            {"id": "crm", "label": "Leads CRM", "value": "0"},
+        ],
+        "liveEvents": [],
+    }
+
+
+def empty_campaigns() -> dict[str, Any]:
+    days = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+    hours = ["8–10", "10–12", "12–14", "14–16", "16–18", "18–20"]
+    return {
+        "dayChips": {
+            "llamadasHoy": 0,
+            "whatsappHoy": 0,
+            "reintentos": 0,
+            "ventana": "8:00-20:00",
+            "ventanaActiva": True,
+        },
+        "campaigns": [],
+        "heatmap": {
+            "days": days,
+            "hours": hours,
+            "values": [[0.0] * len(hours) for _ in days],
+            "unitLabel": "Tasa de conversión",
+        },
+        "ab": None,
+    }
+
+
+def empty_handoff() -> dict[str, Any]:
+    return {
+        "kpis": [
+            {"id": "cola", "label": "Leads en cola", "value": 0, "delta": 0, "deltaUnit": "%"},
+            {"id": "sla", "label": "SLA promedio", "value": "0h 00m", "delta": 0, "deltaUnit": "m"},
+            {
+                "id": "expediente",
+                "label": "Expediente completo",
+                "value": 0,
+                "unit": "%",
+                "delta": 0,
+                "deltaUnit": "pp",
+            },
+            {"id": "cerrados", "label": "Cerrados hoy", "value": 0, "delta": 0, "deltaUnit": "%"},
+        ],
+        "queue": [],
+        "byAdvisor": [],
+        "quality": {"score": 0, "label": "", "breakdown": []},
+    }
+
+
+def empty_conversations() -> dict[str, Any]:
+    return {"conversations": [], "activeCount": 0}
 
 
 @router.get("/dashboard")
 async def ops_dashboard(_ctx: AuthContext = Depends(require_auth)) -> dict[str, Any]:
-    data = _load("dashboard.json")
+    data = empty_dashboard()
     stored = ops_store.list_dispatches(5)
     if stored:
         live = []
@@ -83,7 +204,11 @@ async def ops_dashboard(_ctx: AuthContext = Depends(require_auth)) -> dict[str, 
                     "id": d.get("id"),
                     "channel": "whatsapp" if "whatsapp" in str(d.get("mode")) else "voz",
                     "personName": lead.get("first_name") or "Lead",
-                    "kind": "Dispatch " + str(d.get("status") or d.get("mode") or "ok"),
+                    "kind": (
+                        "WhatsApp enviado"
+                        if "whatsapp" in str(d.get("mode") or "").lower()
+                        else "Llamada enviada"
+                    ),
                     "at": "ahora",
                 }
             )
@@ -93,15 +218,24 @@ async def ops_dashboard(_ctx: AuthContext = Depends(require_auth)) -> dict[str, 
 
 @router.get("/campaigns")
 async def ops_campaigns(_ctx: AuthContext = Depends(require_auth)) -> dict[str, Any]:
-    data = _load("campaigns.json")
+    data = empty_campaigns()
     extra = ops_store.list_campaigns()
     if extra:
         data = {**data, "campaigns": [*extra, *data.get("campaigns", [])]}
     # Overlay day chips from real dispatches when activity exists.
     dispatches = ops_store.list_dispatches(200)
     if dispatches:
-        voice = sum(1 for d in dispatches if "whatsapp" not in str(d.get("mode", "")))
-        wa = sum(1 for d in dispatches if "whatsapp" in str(d.get("mode", "")))
+        voice = sum(
+            1
+            for d in dispatches
+            if "whatsapp" not in str(d.get("mode", "")).lower()
+            and not isinstance(d.get("whatsapp"), dict)
+        )
+        wa = sum(
+            1
+            for d in dispatches
+            if "whatsapp" in str(d.get("mode", "")).lower() or isinstance(d.get("whatsapp"), dict)
+        )
         chips = dict(data.get("dayChips") or {})
         chips["llamadasHoy"] = voice
         chips["whatsappHoy"] = wa
@@ -125,7 +259,7 @@ async def ops_crm(_ctx: AuthContext = Depends(require_auth)) -> dict[str, Any]:
 
 @router.get("/handoff")
 async def ops_handoff(_ctx: AuthContext = Depends(require_auth)) -> dict[str, Any]:
-    data = _load("handoff.json")
+    data = empty_handoff()
     extra = ops_store.list_handoffs(20)
     if extra:
         queue = []
@@ -421,6 +555,69 @@ async def complete_call(
     )
 
 
+@router.get("/post-calls")
+async def list_post_calls(_ctx: AuthContext = Depends(require_auth)) -> dict[str, Any]:
+    items = ops_store.list_post_calls(100)
+    return {"items": items, "total": len(items)}
+
+
+class PostCallActionBody(BaseModel):
+    action: str = Field(pattern="^(approve|skip)$")
+
+
+@router.post("/post-calls/{post_call_id}/action")
+async def post_call_action(
+    post_call_id: str,
+    body: PostCallActionBody,
+    _ctx: AuthContext = Depends(require_auth),
+) -> dict[str, Any]:
+    """Aprobar (enviar WA) u omitir un registro de revisión post-llamada."""
+    items = ops_store.list_post_calls(200)
+    entry = next((x for x in items if str(x.get("id")) == post_call_id), None)
+    if not entry:
+        raise PlatformError("not_found", "post_call not found", status_code=404)
+
+    if body.action == "skip":
+        entry["review_status"] = "skipped"
+        entry["status"] = "skipped"
+        ops_store.upsert_post_call_payload(entry)
+        return {"ok": True, "item": entry}
+
+    phone = str(entry.get("phone") or "").strip()
+    if not phone:
+        raise PlatformError("validation_error", "phone missing on post_call", status_code=422)
+    if entry.get("whatsapp_sent"):
+        entry["review_status"] = "sent"
+        ops_store.upsert_post_call_payload(entry)
+        return {"ok": True, "item": entry, "already_sent": True}
+
+    settings = get_settings()
+    first_name = str(entry.get("first_name") or "Asociado")
+    flow = str(entry.get("flow") or "A")
+    product = resolve_product_flow(flow)
+    if settings.liwa_live_enabled():
+        wa = await liwa_whatsapp_service.send(
+            phone=phone,
+            first_name=first_name,
+            kind="flow",
+            flow_id=str(product.get("liwa_flow_id") or "") or None,
+            text=str(product.get("wa_followup_text") or "Seguimiento PULSO"),
+        )
+    else:
+        wa = whatsapp_mock_service.send_text(
+            phone=phone,
+            text=f"[post-call review] {product.get('wa_followup_text') or 'Seguimiento'}",
+            first_name=first_name,
+            template="post_call_review",
+        )
+    entry["whatsapp"] = wa
+    entry["whatsapp_sent"] = bool(wa.get("ok"))
+    entry["review_status"] = "sent" if wa.get("ok") else "failed"
+    entry["status"] = "completed" if wa.get("ok") else "failed"
+    ops_store.upsert_post_call_payload(entry)
+    return {"ok": bool(wa.get("ok")), "item": entry, "whatsapp": wa}
+
+
 @router.post("/webhooks/elevenlabs/post-call")
 async def elevenlabs_post_call_webhook(request: Request) -> dict[str, Any]:
     """Webhook ElevenLabs `post_call_transcription` → tipificación → WA si interesa."""
@@ -551,6 +748,7 @@ async def whatsapp_send(
             phone=body.phone,
             text=body.text or f"[flow:{body.flow_id or settings.liwa_default_flow_id}]",
             template=body.template,
+            first_name=body.first_name or "",
         )
     result["compliance"] = compliance_service.as_dict(decision)
     return result
@@ -655,7 +853,7 @@ async def post_conversation_message(
 
 @router.get("/conversations")
 async def ops_conversations(_ctx: AuthContext = Depends(require_auth)) -> dict[str, Any]:
-    data = _load("conversation.json")
+    data = empty_conversations()
     claims = {c["id"]: c for c in ops_store.list_conversation_claims()}
     by_id: dict[str, Any] = {c["id"]: dict(c) for c in (data.get("conversations") or [])}
     for t in ops_store.list_conversation_threads():
@@ -683,6 +881,8 @@ async def ops_conversations(_ctx: AuthContext = Depends(require_auth)) -> dict[s
 
     if pii_masking_enabled():
         convs = [mask_conversation(c) for c in convs]
+
+    convs = [humanize_conversation_row(c) for c in convs]
 
     return {
         **data,
@@ -750,7 +950,7 @@ async def list_documents(_ctx: AuthContext = Depends(require_auth)) -> dict[str,
 @router.get("/reports/{report_id}")
 async def get_report(report_id: str, _ctx: AuthContext = Depends(require_auth)) -> dict[str, Any]:
     c = ops_store.counts()
-    dashboard = analytics_service.overlay_dashboard(_load("dashboard.json"))
+    dashboard = analytics_service.overlay_dashboard(empty_dashboard())
     payloads = {
         "semanal": {
             "id": "semanal",

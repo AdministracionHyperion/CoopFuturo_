@@ -8,6 +8,7 @@ from uuid import uuid4
 import httpx
 
 from pilot_core import ops_store
+from pilot_core.modules.activity import record_outbound_conversation, human_voice_status
 from pilot_core.modules.campaigns.service import campaigns_service
 from pilot_core.modules.compliance.service import compliance_service
 from pilot_core.modules.elevenlabs_outbound import place_sip_outbound
@@ -19,6 +20,25 @@ class OrchestrationService:
 
     def ping(self) -> str:
         return self.name
+
+    def _record_inbox(
+        self,
+        *,
+        phone: str,
+        first_name: str,
+        status: str,
+        mode: str = "voz",
+    ) -> None:
+        # Always key inbox threads by phone so voz + WhatsApp share one Conversaciones row.
+        # Never expose provider mode names (elevenlabs_sip, etc.) in operator UI.
+        del mode  # internal only
+        record_outbound_conversation(
+            phone=phone,
+            first_name=first_name,
+            channel="voz",
+            snippet=f"Llamada de voz {human_voice_status(status)}",
+            topic="Llamada de voz",
+        )
 
     async def attempt_call(
         self,
@@ -74,6 +94,7 @@ class OrchestrationService:
                     **payload,
                 }
                 ops_store.insert_dispatch(entry)
+                self._record_inbox(phone=phone, first_name=first_name, status=entry["status"], mode="live_dialer")
                 if campaign_id and resp.is_success:
                     campaigns_service.bump_contacted(campaign_id)
                 return {
@@ -94,6 +115,9 @@ class OrchestrationService:
                 **payload,
             }
             ops_store.insert_dispatch(entry)
+            self._record_inbox(
+                phone=phone, first_name=first_name, status=entry["status"], mode="elevenlabs_sip"
+            )
             if campaign_id and result.get("ok"):
                 campaigns_service.bump_contacted(campaign_id)
             return {
@@ -110,6 +134,12 @@ class OrchestrationService:
             **payload,
         }
         ops_store.insert_dispatch(entry)
+        self._record_inbox(
+            phone=phone,
+            first_name=first_name,
+            status="queued_mock",
+            mode="mock",
+        )
         if campaign_id:
             campaigns_service.bump_contacted(campaign_id)
         return {"ok": True, "mock_commercial": True, "dispatch": entry}

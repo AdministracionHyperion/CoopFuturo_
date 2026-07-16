@@ -37,7 +37,11 @@ class Settings(PlatformSettings):
     core_base_url: str = ""
     core_api_token: str = ""
     core_associate_path: str = "/associates/{document_id}"
-    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_allowed_origins: str = (
+        "http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:3001,http://127.0.0.1:3001,"
+        "http://144.91.100.31:9088,http://144.91.100.31:9089"
+    )
 
     def liwa_live_enabled(self) -> bool:
         return str(self.liwa_mode).lower() == "real" and bool(self.liwa_api_token.strip())

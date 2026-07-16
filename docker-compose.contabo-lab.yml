@@ -1,0 +1,110 @@
+# Isolated PULSO lab stack — does not touch /opt/pulso (:9088).
+# Usage on Contabo:
+#   cd /opt/pulso-lab
+#   docker compose -f docker-compose.dev.yml -f docker-compose.contabo.yml \
+#     -f docker-compose.contabo-lab.yml --env-file .env.contabo-lab up -d --build
+#
+# Tear down when done:
+#   docker compose -f docker-compose.dev.yml -f docker-compose.contabo.yml \
+#     -f docker-compose.contabo-lab.yml --env-file .env.contabo-lab down -v
+
+name: pulso-lab
+
+networks:
+  coopfuturo_edge:
+    name: pulso_lab_edge
+  coopfuturo_app:
+    name: pulso_lab_app
+  coopfuturo_data:
+    name: pulso_lab_data
+
+volumes:
+  coopfuturo_pgdata:
+    name: pulso_lab_pgdata
+  coopfuturo_redis:
+    name: pulso_lab_redis
+
+services:
+  traefik:
+    ports: !override
+      - "0.0.0.0:${TRAEFIK_HTTP_PORT:-9089}:80"
+    volumes: !override
+      - ./infra/traefik/traefik.contabo-lab.yml:/etc/traefik/traefik.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels: !override
+      - traefik.enable=false
+
+  postgres:
+    ports: !override
+      - "127.0.0.1:${POSTGRES_PORT:-25432}:5432"
+
+  redis:
+    ports: !override
+      - "127.0.0.1:${REDIS_PORT:-26379}:6379"
+
+  pilot-core:
+    environment:
+      # Empty → orchestration uses ElevenLabs SIP (not dialer :8080).
+      DIALER_BASE_URL: ""
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://144.91.100.31:9089,http://144.91.100.31:9088}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      ELEVENLABS_WEBHOOK_SECRET: ${ELEVENLABS_WEBHOOK_SECRET:-}
+      LIWA_MODE: ${LIWA_MODE:-mock}
+      LIWA_API_TOKEN: ${LIWA_API_TOKEN:-}
+      LIWA_DEFAULT_FLOW_ID: ${LIWA_DEFAULT_FLOW_ID:-1782399915832}
+      LIWA_FLOW_ID_B: ${LIWA_FLOW_ID_B:-}
+      AUTH_DISABLED: ${AUTH_DISABLED:-true}
+    labels: !override
+      - traefik.enable=true
+      - traefik.docker.network=pulso_lab_app
+      - traefik.http.routers.pilot-core-lab.rule=PathPrefix(`/pilot-core`)
+      - traefik.http.routers.pilot-core-lab.entrypoints=web
+      - traefik.http.middlewares.pilot-core-lab-strip.stripprefix.prefixes=/pilot-core
+      - traefik.http.routers.pilot-core-lab.middlewares=pilot-core-lab-strip
+      - traefik.http.services.pilot-core-lab.loadbalancer.server.port=8201
+
+  whatsapp-adapter:
+    labels: !override
+      - traefik.enable=true
+      - traefik.docker.network=pulso_lab_app
+      - traefik.http.routers.whatsapp-lab.rule=PathPrefix(`/whatsapp`)
+      - traefik.http.routers.whatsapp-lab.entrypoints=web
+      - traefik.http.middlewares.whatsapp-lab-strip.stripprefix.prefixes=/whatsapp
+      - traefik.http.routers.whatsapp-lab.middlewares=whatsapp-lab-strip
+      - traefik.http.services.whatsapp-lab.loadbalancer.server.port=8202
+
+  documents:
+    labels: !override
+      - traefik.enable=true
+      - traefik.docker.network=pulso_lab_app
+      - traefik.http.routers.documents-lab.rule=PathPrefix(`/documents`)
+      - traefik.http.routers.documents-lab.entrypoints=web
+      - traefik.http.middlewares.documents-lab-strip.stripprefix.prefixes=/documents
+      - traefik.http.routers.documents-lab.middlewares=documents-lab-strip
+      - traefik.http.services.documents-lab.loadbalancer.server.port=8203
+
+  handoff-liwa:
+    labels: !override
+      - traefik.enable=true
+      - traefik.docker.network=pulso_lab_app
+      - traefik.http.routers.handoff-lab.rule=PathPrefix(`/handoff-liwa`)
+      - traefik.http.routers.handoff-lab.entrypoints=web
+      - traefik.http.middlewares.handoff-lab-strip.stripprefix.prefixes=/handoff-liwa
+      - traefik.http.routers.handoff-lab.middlewares=handoff-lab-strip
+      - traefik.http.services.handoff-lab.loadbalancer.server.port=8204
+
+  web:
+    build:
+      args:
+        NEXT_PUBLIC_API_MODE: live
+        NEXT_PUBLIC_PILOT_CORE_URL: ${PUBLIC_PILOT_CORE_URL:-http://144.91.100.31:9089/pilot-core}
+    environment:
+      NEXT_PUBLIC_API_MODE: live
+      NEXT_PUBLIC_PILOT_CORE_URL: ${PUBLIC_PILOT_CORE_URL:-http://144.91.100.31:9089/pilot-core}
+    labels: !override
+      - traefik.enable=true
+      - traefik.docker.network=pulso_lab_app
+      - traefik.http.routers.web-lab.rule=PathPrefix(`/`) && !PathPrefix(`/pilot-core`) && !PathPrefix(`/whatsapp`) && !PathPrefix(`/documents`) && !PathPrefix(`/handoff-liwa`)
+      - traefik.http.routers.web-lab.entrypoints=web
+      - traefik.http.routers.web-lab.priority=1
+      - traefik.http.services.web-lab.loadbalancer.server.port=3000

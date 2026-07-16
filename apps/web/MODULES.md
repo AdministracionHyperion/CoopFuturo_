@@ -1,26 +1,25 @@
 # Ops UI PULSO — módulos y fuentes de datos
 
-App: `apps/web` (Next.js). Hoy: `NEXT_PUBLIC_API_MODE=mock` → JSON en `src/data/`.  
-Live: stubs en `src/services/live/` (aún no cableados a `pilot-core` / Traefik).
+App: `apps/web` (Next.js). Default: `NEXT_PUBLIC_API_MODE=live` → pilot-core `/ops/*`.  
+Mock JSON en `src/data/` solo si fuerzas `NEXT_PUBLIC_API_MODE=mock` (no recomendado).
 
 ## Mapa rápido
 
-| Ruta | Módulo | Archivo mock | Backend esperado (live) |
+| Ruta | Módulo | Fuente live | Backend |
 |---|---|---|---|
-| `/dashboard` | Dashboard BI | `dashboard.json` | Analytics / pilot-core métricas piloto |
-| `/campanas` | Campañas | `campaigns.json` | Campañas + A/B + heatmap conversión |
-| `/conversaciones` | Inbox | `conversation.json` | Conversaciones voz/WA + expediente |
-| `/crm` | Funnel kanban | `crm.json` | Pipeline por segmento |
-| `/handoff` | Cola asesores | `handoff.json` | Handoffs LIWA / cola |
-| `/segmentacion` | Priorización IA | (inline + heatmap) | Scores propensión/urgencia |
-| `/reportes` | Reportes | (inline) | Exports agregados |
-| `/configuracion` | Config white-label | (inline) | Preferencias ops / OIDC roles |
-
----
+| `/dashboard` | Dashboard BI | `GET /ops/dashboard` | Store real o vacío |
+| `/campanas` | Campañas | `GET /ops/campaigns` | Store real o vacío |
+| `/conversaciones` | Inbox | `GET /ops/conversations` | Threads/claims store |
+| `/crm` | Funnel kanban | `GET /ops/crm` | Leads store (sin fixtures) |
+| `/handoff` | Cola asesores | `GET /ops/handoff` | Store real o vacío |
+| `/segmentacion` | Priorización | `GET /ops/segmentation` | Contactos store o vacío |
+| `/reportes` | Reportes | `GET /ops/reports/...` | Aggregados store |
+| `/configuracion` | Config | `GET/PUT /ops/settings` | Dialer / Agentes A-B / PII |
+| `/laboratorio` | Ops console | Mutations ops-client | Llamadas + WhatsApp |
 
 ## 1. Dashboard (`/dashboard`)
 
-**Qué muestra:** KPIs del piloto, contactos por día, embudo renovación, estados de base, ops, feed en vivo.
+**Qué muestra:** KPIs y series desde actividad real. Sin actividad → empty state (sin smoke).
 
 | Widget | Qué debe alimentar | Campos mock / contrato sugerido |
 |---|---|---|

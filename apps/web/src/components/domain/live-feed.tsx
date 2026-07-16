@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import { Phone, MessageCircle } from "lucide-react";
 import { pulse, slide } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { sanitizeOpsCopy } from "@/lib/sanitize-ops-copy";
 
 export type LiveEvent = {
   id: string;
@@ -53,7 +54,7 @@ export function LiveFeed({ events }: { events: LiveEvent[] }) {
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{e.personName}</p>
-              <p className="text-xs text-[var(--accent)]">{e.kind}</p>
+              <p className="text-xs text-[var(--accent)]">{sanitizeOpsCopy(e.kind)}</p>
             </div>
             <time className="shrink-0 text-[10px] tabular text-[var(--muted)]">{e.at}</time>
           </motion.li>

@@ -89,7 +89,7 @@ export default function ReportesPage() {
     <div>
       <PageHeader
         title="Reportes"
-        subtitle="Exporta KPIs y ops desde pilot-core (JSON / CSV)."
+        subtitle="Exporta KPIs y ops (JSON / CSV)."
       />
       <div className="grid gap-4 sm:grid-cols-2">
         {TEMPLATES.map((t) => (

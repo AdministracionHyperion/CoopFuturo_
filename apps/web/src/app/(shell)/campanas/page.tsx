@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,10 +9,8 @@ import { StatCard } from "@/components/data/stat-card";
 import { ChartCard } from "@/components/data/chart-card";
 import { ConversionHeatmap } from "@/components/charts";
 import { useCampaigns } from "@/hooks/use-pulso";
-import { createCampaign } from "@/services/ops-client";
 import { cn, formatNumber } from "@/lib/utils";
-import { Plus, Phone, MessageCircle } from "lucide-react";
-import { toast } from "sonner";
+import { Plus, Phone, MessageCircle, Search } from "lucide-react";
 
 const statusTone = {
   activa: "success" as const,
@@ -21,32 +20,33 @@ const statusTone = {
 
 export default function CampanasPage() {
   const { data, isLoading, isError, refetch } = useCampaigns();
-  const [selectedId, setSelectedId] = useState<string>("c1");
-  const [retriesOn, setRetriesOn] = useState(true);
-  const [creating, setCreating] = useState(false);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "activa" | "en_curso" | "completada">(
+    "all",
+  );
+  const [channelFilter, setChannelFilter] = useState<"all" | "voz" | "whatsapp">("all");
 
-  async function onNuevaCampana() {
-    setCreating(true);
-    try {
-      const created = await createCampaign({
-        name: `Campana demo ${new Date().toLocaleTimeString("es-CO", { hour12: false })}`,
-        segment: "Renovacion",
-        channels: ["voz", "whatsapp"],
-        total: 100,
-      });
-      toast.success("Campaña creada", {
-        description: `${created.id} · ${created.name}`,
-      });
-      await refetch();
-      setSelectedId(created.id);
-    } catch (err) {
-      toast.error("No se pudo crear la campaña", {
-        description: err instanceof Error ? err.message : "Error desconocido",
-      });
-    } finally {
-      setCreating(false);
-    }
-  }
+  const campaigns = useMemo(() => data?.campaigns ?? [], [data?.campaigns]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return campaigns.filter((c) => {
+      if (statusFilter !== "all" && c.status !== statusFilter) return false;
+      if (channelFilter !== "all" && !c.channels.includes(channelFilter)) return false;
+      if (!q) return true;
+      return (
+        c.name.toLowerCase().includes(q) ||
+        c.segment.toLowerCase().includes(q) ||
+        c.status.toLowerCase().includes(q)
+      );
+    });
+  }, [campaigns, query, statusFilter, channelFilter]);
+
+  const selected =
+    filtered.find((c) => c.id === selectedId) ??
+    campaigns.find((c) => c.id === selectedId) ??
+    filtered[0] ??
+    campaigns[0];
 
   if (isError) {
     return (
@@ -60,7 +60,6 @@ export default function CampanasPage() {
   }
 
   const chips = data?.dayChips;
-  const selected = data?.campaigns.find((c) => c.id === selectedId) ?? data?.campaigns[0];
   const heatmap = data?.heatmap;
 
   return (
@@ -69,9 +68,11 @@ export default function CampanasPage() {
         title="Campañas"
         subtitle="Gestiona y monitorea tus campañas outbound."
         actions={
-          <Button onClick={onNuevaCampana} disabled={creating}>
-            <Plus className="size-[18px]" strokeWidth={1.75} />
-            {creating ? "Creando…" : "Nueva campaña"}
+          <Button asChild>
+            <Link href="/campanas/nueva">
+              <Plus className="size-[18px]" strokeWidth={1.75} />
+              Nueva campaña
+            </Link>
           </Button>
         }
       />
@@ -80,22 +81,16 @@ export default function CampanasPage() {
         <StatCard
           label="Llamadas hoy"
           value={chips?.llamadasHoy ?? 0}
-          delta={12.4}
-          deltaUnit="%"
           loading={isLoading}
         />
         <StatCard
           label="Msgs WhatsApp hoy"
           value={chips?.whatsappHoy ?? 0}
-          delta={8.7}
-          deltaUnit="%"
           loading={isLoading}
         />
         <StatCard
           label="Reintentos programados"
           value={chips?.reintentos ?? 0}
-          delta={5.3}
-          deltaUnit="%"
           loading={isLoading}
         />
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -109,8 +104,53 @@ export default function CampanasPage() {
         </div>
       </div>
 
+      {!isLoading && campaigns.length === 0 && (
+        <div className="mt-6 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-6 text-center">
+          <p className="text-sm text-[var(--muted)]">Aún no hay campañas.</p>
+          <Button asChild className="mt-3">
+            <Link href="/campanas/nueva">Crear la primera</Link>
+          </Button>
+        </div>
+      )}
+
       <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_360px]">
         <ChartCard title="Campañas outbound">
+          <div className="mb-3 flex flex-wrap gap-2">
+            <div className="relative min-w-[180px] flex-1">
+              <Search
+                className="pointer-events-none absolute left-2.5 top-2.5 size-3.5 text-[var(--muted)]"
+                strokeWidth={1.75}
+              />
+              <input
+                className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                placeholder="Buscar campaña…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                aria-label="Buscar campañas"
+              />
+            </div>
+            <select
+              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 text-xs"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+              aria-label="Filtrar por estado"
+            >
+              <option value="all">Todos los estados</option>
+              <option value="activa">Activa</option>
+              <option value="en_curso">En curso</option>
+              <option value="completada">Completada</option>
+            </select>
+            <select
+              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 text-xs"
+              value={channelFilter}
+              onChange={(e) => setChannelFilter(e.target.value as typeof channelFilter)}
+              aria-label="Filtrar por canal"
+            >
+              <option value="all">Todos los canales</option>
+              <option value="voz">Voz</option>
+              <option value="whatsapp">WhatsApp</option>
+            </select>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead className="text-xs text-[var(--muted)]">
@@ -124,7 +164,7 @@ export default function CampanasPage() {
                 </tr>
               </thead>
               <tbody>
-                {(data?.campaigns ?? []).map((c) => {
+                {filtered.map((c) => {
                   const pct = c.continuous
                     ? null
                     : Math.round((c.contacted / Math.max(c.total, 1)) * 100);
@@ -134,7 +174,7 @@ export default function CampanasPage() {
                       key={c.id}
                       className={cn(
                         "cursor-pointer border-b border-[var(--border)]/60 hover:bg-[var(--surface-2)]",
-                        active && "bg-[var(--accent-dim)]"
+                        active && "bg-[var(--accent-dim)]",
                       )}
                       onClick={() => setSelectedId(c.id)}
                     >
@@ -176,6 +216,13 @@ export default function CampanasPage() {
                     </tr>
                   );
                 })}
+                {!isLoading && filtered.length === 0 && campaigns.length > 0 && (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-sm text-[var(--muted)]">
+                      Ninguna campaña coincide con el filtro.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -212,7 +259,7 @@ export default function CampanasPage() {
             </ChartCard>
           )}
 
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 opacity-80">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-medium">Reintentos inteligentes</p>
@@ -223,26 +270,17 @@ export default function CampanasPage() {
               <button
                 type="button"
                 role="switch"
-                aria-checked={retriesOn}
-                onClick={() => {
-                  setRetriesOn((v) => !v);
-                  toast.success(retriesOn ? "Reintentos desactivados" : "Reintentos activados");
-                }}
-                className={cn(
-                  "relative h-7 w-12 shrink-0 rounded-full transition-colors",
-                  retriesOn ? "bg-[var(--accent)]" : "bg-white/15"
-                )}
+                aria-checked={false}
+                aria-disabled
+                disabled
+                title="Disponible cuando el backend exponga esta preferencia"
+                className="relative h-7 w-12 shrink-0 cursor-not-allowed rounded-full bg-white/15 opacity-60"
               >
-                <span
-                  className={cn(
-                    "absolute top-0.5 size-6 rounded-full bg-white transition-transform",
-                    retriesOn ? "left-5" : "left-0.5"
-                  )}
-                />
+                <span className="absolute left-0.5 top-0.5 size-6 rounded-full bg-white" />
               </button>
             </div>
             <p className="mt-2 text-[10px] text-[var(--muted)]">
-              {retriesOn ? "Modelo activo · Última actualización: Hoy, 07:45" : "Modelo en pausa"}
+              Deshabilitado · aún no hay endpoint para persistir este control
             </p>
           </div>
         </div>
