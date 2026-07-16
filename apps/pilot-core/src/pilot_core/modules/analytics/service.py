@@ -80,6 +80,7 @@ class AnalyticsService:
 
         contacted = voice + wa
         base_total = max(contacts, contacted, 1)
+        failed_count = sum(1 for d in dispatches if d.get("status") == "failed")
         base_status = [
             {
                 "key": "contactados",
@@ -98,8 +99,8 @@ class AnalyticsService:
             {
                 "key": "no_disponibles",
                 "label": "No disponibles",
-                "count": sum(1 for d in dispatches if d.get("status") == "failed"),
-                "pct": 0,
+                "count": failed_count,
+                "pct": round(100 * failed_count / base_total, 1) if failed_count else 0,
                 "color": "warning",
             },
             {
@@ -117,9 +118,6 @@ class AnalyticsService:
                 "color": "info",
             },
         ]
-        # Fix pct for no_disponibles
-        failed = base_status[2]["count"]
-        base_status[2]["pct"] = round(100 * failed / base_total, 1) if failed else 0
 
         funnel_counts = {
             "contactado": contacted,
