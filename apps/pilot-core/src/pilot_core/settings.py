@@ -11,7 +11,7 @@ class Settings(PlatformSettings):
     auth_disabled: bool = True
     # Dialer HTTP (microservicio externo). Vacío = intentar ElevenLabs SIP directo.
     dialer_base_url: str = ""
-    dialer_default_phone_number_id: str = "phnum_0001kxk88197exs8dpam295z4rmb"
+    dialer_default_phone_number_id: str = "phnum_8201kxpqbx2tep8vs46t888y3gv8"
     # ElevenLabs — outbound SIP trunk directo (PULSO).
     elevenlabs_api_key: str = ""
     # LIWA WhatsApp — real solo con token en env (nunca en git).
@@ -24,6 +24,20 @@ class Settings(PlatformSettings):
     liwa_flow_id_b: str = ""
     liwa_handoff_tag: str = "RENOVACION_VIP"
     liwa_handoff_tag_b: str = "REACTIVACION_VIP"
+    # Shared secret for LIWA → PULSO webhooks / API externa (header X-LIWA-WEBHOOK-SECRET).
+    liwa_webhook_secret: str = ""
+    # Tenant ContextVar when LIWA webhook has no Ops JWT (Contabo single-tenant).
+    liwa_webhook_tenant_id: str = "coopfuturo"
+    # Alias used in some Contabo env files (Version / .env.contabo.example).
+    liwa_webhook_default_tenant: str = ""
+
+    def liwa_webhook_tenant(self) -> str:
+        return (
+            (self.liwa_webhook_tenant_id or "").strip()
+            or (self.liwa_webhook_default_tenant or "").strip()
+            or "coopfuturo"
+        )
+
     # Documentos
     documents_storage_backend: str = "filesystem"  # mock | filesystem | minio
     documents_local_root: str = ""  # vacío = {PULSO_DATA_DIR|…}/documents

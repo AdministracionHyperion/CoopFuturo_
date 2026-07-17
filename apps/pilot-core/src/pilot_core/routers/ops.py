@@ -23,6 +23,7 @@ from pilot_core.modules.contacts.service import contacts_service
 from pilot_core.modules.core_adapter.service import core_adapter_service
 from pilot_core.modules.crm.service import crm_service
 from pilot_core.modules.documents_service import documents_service
+from pilot_core.modules.liwa_inbound import process_liwa_inbound
 from pilot_core.modules.liwa_whatsapp import liwa_whatsapp_service
 from pilot_core.modules.orchestration.service import orchestration_service
 from pilot_core.modules.pii import (
@@ -267,7 +268,8 @@ async def ops_crm(_ctx: AuthContext = Depends(require_ops_auth)) -> dict[str, An
 @router.get("/handoff")
 async def ops_handoff(_ctx: AuthContext = Depends(require_ops_auth)) -> dict[str, Any]:
     data = empty_handoff()
-    extra = ops_store.list_handoffs(20)
+    # Only queued handoffs — claimed/resolved must leave the advisor queue.
+    extra = ops_store.list_handoffs(20, queued_only=True)
     if extra:
         queue = []
         for h in extra:
@@ -279,10 +281,11 @@ async def ops_handoff(_ctx: AuthContext = Depends(require_ops_auth)) -> dict[str
                     "canal": "whatsapp" if h.get("phone") else "voz",
                     "phone": h.get("phone") or (info if isinstance(info, str) else ""),
                 }
+            conversation_id = h.get("conversationId") or h.get("conversation_id") or None
             queue.append(
                 {
                     "id": h.get("id"),
-                    "conversationId": h.get("conversationId") or h.get("id"),
+                    "conversationId": conversation_id or h.get("id"),
                     "priority": h.get("priority", "alta"),
                     "name": h.get("name", "Lead"),
                     "segment": h.get("segment", "Renovacion"),
@@ -296,7 +299,7 @@ async def ops_handoff(_ctx: AuthContext = Depends(require_ops_auth)) -> dict[str
             )
         data = {**data, "queue": [*queue, *data.get("queue", [])]}
     # Overlay KPI cola with merged queue length.
-    if ops_store.list_handoffs(1):
+    if ops_store.list_handoffs(1, queued_only=True):
         queue_len = len(data.get("queue") or [])
         kpis = []
         for k in data.get("kpis") or []:
@@ -332,6 +335,7 @@ class CreateHandoffBody(BaseModel):
     priority: str = "alta"
     phone: str | None = None
     agency_tag: str | None = None
+    conversation_id: str | None = Field(default=None, max_length=80)
     idempotency_key: str | None = Field(default=None, max_length=120)
 
 
@@ -406,15 +410,25 @@ async def create_handoff(
     body: CreateHandoffBody,
     _ctx: AuthContext = Depends(require_ops_roles(*OPS_OPERATE)),
 ) -> dict[str, Any]:
-    """AUD-021: durable handoff saga — claim → thread → LIWA → persist."""
+    """AUD-021: durable handoff saga — claim → thread → LIWA → persist.
+
+    When ``conversation_id`` is provided (Transferir desde Conversaciones), reuse
+    that thread instead of cloning a new ``cv_*`` inbox row.
+    """
     from pilot_core.modules.product_flow import resolve_product_flow
 
     flow_guess = "B" if "reactiva" in (body.segment or "").lower() else "A"
     product = resolve_product_flow(flow_guess)
     agency_tag = body.agency_tag or str(product["liwa_handoff_tag"])
-    idem = (body.idempotency_key or "").strip() or (
-        f"handoff:{(body.phone or '').strip()}:{agency_tag}:{body.segment}"
-    )
+    link_cid = (body.conversation_id or "").strip() or None
+    if (body.idempotency_key or "").strip():
+        idem = (body.idempotency_key or "").strip()
+    elif link_cid:
+        idem = f"handoff:{link_cid}"
+    elif (body.phone or "").strip():
+        idem = f"handoff:{(body.phone or '').strip()}:{agency_tag}"
+    else:
+        idem = f"handoff::{agency_tag}:{body.segment}"
     claimed, saga = ops_store.claim_saga(
         "handoff",
         idem,
@@ -434,45 +448,106 @@ async def create_handoff(
     assert saga is not None
     steps: dict[str, Any] = dict(saga.get("steps") or {})
     try:
-        cid = str(steps.get("conversation_id") or f"cv_{uuid4().hex[:10]}")
-        hid = str(steps.get("handoff_id") or f"h_{uuid4().hex[:10]}")
+        existing_queued = ops_store.find_queued_handoff(
+            conversation_id=link_cid,
+            phone=body.phone,
+        )
+        if existing_queued and not steps.get("handoff_id"):
+            steps["handoff_id"] = str(existing_queued.get("id"))
+            prior_cid = existing_queued.get("conversationId") or existing_queued.get(
+                "conversation_id"
+            )
+            if prior_cid and not steps.get("conversation_id"):
+                steps["conversation_id"] = str(prior_cid)
+
+        if link_cid:
+            cid = str(steps.get("conversation_id") or link_cid)
+        else:
+            cid = str(steps.get("conversation_id") or f"cv_{uuid4().hex[:10]}")
+        hid = str(
+            steps.get("handoff_id") or (existing_queued or {}).get("id") or f"h_{uuid4().hex[:10]}"
+        )
         if not steps.get("thread_done"):
-            thread = {
-                "id": cid,
-                "name": body.name,
-                "topic": body.segment,
-                "snippet": body.motivo,
-                "sentiment": "neutral",
-                "tags": ["Handoff", body.segment],
-                "botActive": True,
-                "botPaused": False,
-                "messages": [
+            existing_thread = next(
+                (t for t in ops_store.list_conversation_threads() if t.get("id") == cid),
+                None,
+            )
+            if existing_thread is not None:
+                tags = list(existing_thread.get("tags") or [])
+                if "Handoff" not in tags:
+                    tags = ["Handoff", *tags]
+                if body.segment and body.segment not in tags:
+                    tags = [*tags, body.segment]
+                if agency_tag and agency_tag not in tags:
+                    tags = [agency_tag, *tags]
+                expediente = dict(existing_thread.get("expediente") or {})
+                if body.phone and not expediente.get("phone"):
+                    expediente["phone"] = body.phone
+                expediente["estadoCrm"] = "Handoff"
+                thread = {
+                    **existing_thread,
+                    "topic": existing_thread.get("topic") or body.segment,
+                    "snippet": body.motivo,
+                    "tags": tags,
+                    "botActive": False,
+                    "botPaused": True,
+                    "expediente": expediente,
+                    "aiSummary": {
+                        **(existing_thread.get("aiSummary") or {}),
+                        "text": body.motivo,
+                        "intencion": "handoff",
+                        "etapa": "asesor",
+                    },
+                }
+                ops_store.upsert_conversation_thread(thread)
+                ops_store.append_conversation_message(
+                    cid,
                     {
                         "id": f"m_{uuid4().hex[:8]}",
                         "role": "bot",
                         "text": f"Transferencia a asesor: {body.motivo}",
                         "at": "ahora",
-                    }
-                ],
-                "expediente": {
-                    "cedula": "-",
-                    "universidad": "-",
-                    "programa": "-",
-                    "semestre": "-",
-                    "cuotasPagadas": 0,
-                    "cuotasTotal": 1,
-                    "estadoCrm": "Handoff",
-                    "score": 70,
-                    "scoreLabel": "Media",
-                },
-                "aiSummary": {
-                    "text": body.motivo,
-                    "intencion": "handoff",
-                    "etapa": "asesor",
-                    "sentimiento": "neutral",
-                },
-            }
-            ops_store.upsert_conversation_thread(thread)
+                        "source": "ops_handoff",
+                    },
+                )
+            else:
+                thread = {
+                    "id": cid,
+                    "name": body.name,
+                    "topic": body.segment,
+                    "snippet": body.motivo,
+                    "sentiment": "neutral",
+                    "tags": ["Handoff", body.segment],
+                    "botActive": False,
+                    "botPaused": True,
+                    "messages": [
+                        {
+                            "id": f"m_{uuid4().hex[:8]}",
+                            "role": "bot",
+                            "text": f"Transferencia a asesor: {body.motivo}",
+                            "at": "ahora",
+                        }
+                    ],
+                    "expediente": {
+                        "cedula": "-",
+                        "universidad": "-",
+                        "programa": "-",
+                        "semestre": "-",
+                        "cuotasPagadas": 0,
+                        "cuotasTotal": 1,
+                        "estadoCrm": "Handoff",
+                        "score": 70,
+                        "scoreLabel": "Media",
+                        "phone": body.phone or "",
+                    },
+                    "aiSummary": {
+                        "text": body.motivo,
+                        "intencion": "handoff",
+                        "etapa": "asesor",
+                        "sentimiento": "neutral",
+                    },
+                }
+                ops_store.upsert_conversation_thread(thread)
             steps["thread_done"] = True
             steps["conversation_id"] = cid
             steps["handoff_id"] = hid
@@ -538,35 +613,47 @@ async def create_handoff(
             )
 
         if not steps.get("persisted"):
+            base_entry: dict[str, Any] = dict(existing_queued) if existing_queued else {}
+            raw_info = base_entry.get("info")
+            info_base: dict[str, Any] = raw_info if isinstance(raw_info, dict) else {}
             entry: dict[str, Any] = {
+                **base_entry,
                 "id": hid,
                 "conversationId": cid,
+                "conversation_id": cid,
                 "name": body.name,
                 "segment": body.segment,
                 "motivo": body.motivo,
                 "priority": body.priority,
-                "phone": body.phone,
-                "expedientePct": 85,
-                "tiempoCola": "0h 01m",
+                "phone": body.phone or base_entry.get("phone"),
+                "status": "queued",
+                "expedientePct": base_entry.get("expedientePct", 85),
+                "tiempoCola": base_entry.get("tiempoCola", "0h 01m"),
                 "asesor": None,
-                "aiSummary": "Creado desde laboratorio/API",
+                "aiSummary": body.motivo
+                or base_entry.get("aiSummary")
+                or "Creado desde laboratorio/API",
                 "liwa": liwa_meta,
                 "info": {
-                    "universidad": "-",
-                    "programa": "-",
+                    **info_base,
+                    "universidad": info_base.get("universidad") or "-",
+                    "programa": info_base.get("programa") or "-",
                     "canal": "whatsapp" if body.phone else "voz",
                     "phone": body.phone or "",
-                    "liwa_tag": liwa_meta.get("tag_name"),
+                    "liwa_tag": liwa_meta.get("tag_name") or agency_tag,
                     "liwa_contact_id": liwa_meta.get("contact_id"),
                 },
                 "saga_id": saga.get("id"),
+                "source": base_entry.get("source") or ("conversations" if link_cid else "api"),
             }
             try:
-                entry = ops_store.insert_handoff(entry)
+                if existing_queued:
+                    entry = ops_store.upsert_handoff(entry)
+                else:
+                    entry = ops_store.insert_handoff(entry)
             except Exception:  # noqa: BLE001 — resume if row already exists
                 prior_ho = steps.get("handoff")
-                if isinstance(prior_ho, dict):
-                    entry = prior_ho
+                entry = prior_ho if isinstance(prior_ho, dict) else ops_store.upsert_handoff(entry)
             steps["persisted"] = True
             steps["handoff"] = entry
             saga["steps"] = steps
@@ -584,7 +671,8 @@ async def create_handoff(
         raise
     except Exception as exc:  # noqa: BLE001
         saga["status"] = "failed"
-        saga["error"] = str(exc)[:200]
+        # Persist a safe code only — never raw exception / stack text.
+        saga["error"] = type(exc).__name__[:80]
         saga["steps"] = steps
         ops_store.save_saga(saga)
         raise
@@ -689,6 +777,77 @@ async def _read_body_capped(request: Request, *, max_bytes: int) -> bytes:
             )
         chunks.append(piece)
     return b"".join(chunks)
+
+
+@router.post("/webhooks/liwa")
+async def liwa_inbound_webhook(request: Request) -> dict[str, Any]:
+    """LIWA Webhooks / API externa → espejo Conversaciones, CSAT, opt-out, handoff AG_*."""
+    settings = get_settings()
+    secret = (settings.liwa_webhook_secret or "").strip()
+    require_secret = settings.app_env in ("staging", "production") or not settings.auth_disabled
+    if require_secret and not secret:
+        raise PlatformError(
+            "webhook_misconfigured",
+            "LIWA_WEBHOOK_SECRET is required",
+            status_code=503,
+        )
+
+    provided = (
+        request.headers.get("x-liwa-webhook-secret")
+        or request.headers.get("x-webhook-secret")
+        or ""
+    ).strip()
+    if secret and provided != secret:
+        raise PlatformError("webhook_secret", "Invalid LIWA webhook secret", status_code=401)
+
+    raw = await _read_body_capped(request, max_bytes=_WEBHOOK_MAX_BYTES)
+    try:
+        payload = json.loads(raw.decode("utf-8") or "{}")
+    except Exception as exc:
+        raise PlatformError("invalid_json", "Invalid JSON body", status_code=400) from exc
+    if not isinstance(payload, dict):
+        raise PlatformError("invalid_json", "JSON object required", status_code=400)
+
+    tenant = str(payload.get("tenant_id") or "").strip() or settings.liwa_webhook_tenant()
+    with ops_store.tenant_scope(tenant):
+        result = await process_liwa_inbound(payload)
+    return result
+
+
+class LiwaSimulateBody(BaseModel):
+    event: str = Field(
+        default="document_received",
+        description="document_received | prequal_completed | handoff_requested | csat | opt_out | message",
+    )
+    phone: str = Field(min_length=7, max_length=32)
+    first_name: str = "Asociado"
+    name: str | None = None
+    ciudad: str | None = "Barranquilla"
+    text: str | None = None
+    score: int | None = Field(default=None, ge=1, le=5)
+    tenant_id: str = "coopfuturo"
+
+
+@router.post("/laboratorio/liwa-event")
+async def simulate_liwa_event(
+    body: LiwaSimulateBody, _ctx: AuthContext = Depends(require_ops_roles(*OPS_OPERATE))
+) -> dict[str, Any]:
+    """Laboratorio: simular webhook LIWA sin configurar nodos (mismo path que producción)."""
+    payload: dict[str, Any] = {
+        "event": body.event,
+        "phone": body.phone,
+        "first_name": body.name or body.first_name,
+        "name": body.name or body.first_name,
+        "tenant_id": body.tenant_id,
+    }
+    if body.ciudad:
+        payload["ciudad"] = body.ciudad
+    if body.text:
+        payload["text"] = body.text
+    if body.score is not None:
+        payload["score"] = body.score
+    with ops_store.tenant_scope(body.tenant_id or get_settings().liwa_webhook_tenant()):
+        return await process_liwa_inbound(payload)
 
 
 @router.post("/webhooks/elevenlabs/post-call")
@@ -824,9 +983,14 @@ async def whatsapp_send(
             kind=body.kind,
             flow_id=body.flow_id,
         )
-        if not result.get("ok"):
+        # LIWA often returns HTTP 200 + success=true without message_id (AUD-016 →
+        # accepted_pending). That is a real handoff, not a send failure.
+        delivery = str(result.get("delivery") or "")
+        raw_message = result.get("message")
+        msg: dict[str, Any] = raw_message if isinstance(raw_message, dict) else {}
+        wa_status = str(msg.get("status") or delivery)
+        if not result.get("ok") and wa_status not in {"accepted_pending", "queued_mock"}:
             detail = result.get("error") or "LIWA send failed"
-            msg = result.get("message")
             if isinstance(msg, dict) and msg.get("error"):
                 detail = str(msg.get("error"))
             raise PlatformError(
@@ -1021,13 +1185,19 @@ async def crm_move(
             lead_id=body.lead_id, to_column=body.to_column, tipificacion=body.tipificacion
         )
     except ValueError as exc:
-        # Controlled CRM messages only â€” never raw stack traces.
-        msg = str(exc)
-        if not msg.startswith(
-            ("transition_not_allowed:", "tipificacion_required:", "lead_not_found:")
-        ):
+        # Controlled CRM codes only — never raw exception / stack text to clients.
+        raw = str(exc)
+        allowed = (
+            "transition_not_allowed:",
+            "tipificacion_required:",
+            "lead_not_found:",
+        )
+        if raw.startswith(allowed):
+            code = raw.split(":", 1)[0]
+            msg = code
+        else:
             msg = "crm_transition_blocked"
-        raise PlatformError("crm_transition_blocked", msg, status_code=400) from exc
+        raise PlatformError("crm_transition_blocked", msg, status_code=400) from None
     if body.funnel:
         lead["funnel"] = body.funnel
         ops_store.upsert_crm_lead(lead)
@@ -1045,6 +1215,188 @@ async def crm_create_lead(
     body: CrmCreateBody, _ctx: AuthContext = Depends(require_ops_roles(*OPS_OPERATE))
 ) -> dict[str, Any]:
     return crm_service.create_lead(name=body.name, funnel=body.funnel, phone=body.phone)
+
+
+@router.get("/conversations/{conversation_id}/liwa-status")
+async def conversation_liwa_status(
+    conversation_id: str,
+    _ctx: AuthContext = Depends(require_ops_auth),
+) -> dict[str, Any]:
+    """Poll LIWA contact (live_chat + tags) and sync handoff into PULSO for the demo bridge."""
+    from pilot_core.modules.liwa_inbound import _crm_to
+    from pilot_core.modules.liwa_whatsapp import is_handoff_tag
+
+    thread = next(
+        (t for t in ops_store.list_conversation_threads() if t.get("id") == conversation_id),
+        None,
+    )
+    if thread is None:
+        raise PlatformError("not_found", "conversation not found", status_code=404)
+
+    phone = str((thread.get("expediente") or {}).get("phone") or "").strip()
+    if not phone:
+        # Fallback: conversation ids like cv_573004198710
+        digits = "".join(ch for ch in conversation_id if ch.isdigit())
+        if len(digits) >= 10:
+            phone = f"+{digits}" if digits.startswith("57") else f"+57{digits[-10:]}"
+
+    if not phone:
+        return {
+            "ok": False,
+            "error": "phone_missing",
+            "conversation_id": conversation_id,
+            "live_chat": False,
+            "handoff_detected": False,
+            "tags": [],
+            "synced": False,
+        }
+
+    first_name = str(thread.get("name") or "Asociado")
+    settings = get_settings()
+    if not settings.liwa_live_enabled():
+        return {
+            "ok": False,
+            "error": "liwa_not_live",
+            "conversation_id": conversation_id,
+            "phone": phone,
+            "live_chat": False,
+            "handoff_detected": False,
+            "tags": [],
+            "mode": "mock",
+            "synced": False,
+            "inbox_url": "https://chat.liwa.co/?acc=1656233",
+        }
+
+    state = await liwa_whatsapp_service.get_contact_handoff_state(
+        phone=phone,
+        first_name=first_name,
+    )
+    synced = False
+    crm: dict[str, Any] | None = None
+    actions: list[str] = []
+
+    if state.get("handoff_detected"):
+        already = bool(thread.get("botPaused")) and (
+            "Handoff" in (thread.get("tags") or [])
+            or any(is_handoff_tag(str(t)) for t in (thread.get("tags") or []))
+        )
+        handoff_tag = None
+        for t in state.get("handoff_tags") or []:
+            handoff_tag = str(t)
+            break
+        agency_hint = state.get("agency_hint")
+        tags = list(thread.get("tags") or [])
+        if "Handoff" not in tags:
+            tags = ["Handoff", *tags]
+        if "WhatsApp" not in tags:
+            tags = ["WhatsApp", *tags]
+        if handoff_tag and handoff_tag not in tags:
+            tags = [handoff_tag, *tags]
+        snippet = (
+            "Live chat LIWA"
+            + (f" · {agency_hint}" if agency_hint else "")
+            + (f" · {handoff_tag}" if handoff_tag else "")
+        )
+        thread = {
+            **thread,
+            "tags": tags,
+            "botActive": False,
+            "botPaused": True,
+            "channel": "whatsapp",
+            "snippet": snippet[:160],
+            "expediente": {
+                **(thread.get("expediente") or {}),
+                "phone": phone,
+                "estadoCrm": "Handoff",
+            },
+            "aiSummary": {
+                **(thread.get("aiSummary") or {}),
+                "text": snippet[:240],
+                "etapa": "asesor",
+                "intencion": "handoff",
+            },
+            "liwa_bridge": {
+                "contact_id": state.get("contact_id"),
+                "live_chat": state.get("live_chat"),
+                "agency_hint": agency_hint,
+                "handoff_tags": state.get("handoff_tags") or [],
+                "inbox_url": state.get("inbox_url"),
+            },
+        }
+        ops_store.upsert_conversation_thread(thread)
+        actions.append("thread_handoff_synced")
+        if not already:
+            existing_ho = ops_store.find_queued_handoff(
+                conversation_id=conversation_id,
+                phone=phone,
+            )
+            existing_info = (existing_ho or {}).get("info") if existing_ho else None
+            ho_info: dict[str, Any] = existing_info if isinstance(existing_info, dict) else {}
+            ho_payload = {
+                "id": (existing_ho or {}).get("id") or f"ho_{uuid4().hex[:10]}",
+                "name": first_name,
+                "segment": "WhatsApp",
+                "motivo": snippet,
+                "priority": "alta",
+                "agency_tag": handoff_tag or agency_hint or "LIWA_LIVE",
+                "phone": phone,
+                "conversationId": conversation_id,
+                "conversation_id": conversation_id,
+                "status": "queued",
+                "source": (existing_ho or {}).get("source") or "liwa_bridge_poll",
+                "aiSummary": snippet,
+                "info": {
+                    **ho_info,
+                    "canal": "whatsapp",
+                    "phone": phone,
+                    "liwa_tag": handoff_tag or agency_hint,
+                },
+            }
+            if existing_ho:
+                ops_store.upsert_handoff(ho_payload)
+                actions.append("handoff_reused")
+            else:
+                ops_store.insert_handoff(ho_payload)
+                actions.append("handoff_queued")
+            crm = _crm_to(phone=phone, column="transferido", name=first_name)
+            actions.append("crm_transferido")
+            ops_store.append_conversation_message(
+                conversation_id,
+                {
+                    "id": f"m_{uuid4().hex[:10]}",
+                    "role": "bot",
+                    "text": (
+                        "LIWA: conversación en live chat"
+                        + (f" ({agency_hint})" if agency_hint else "")
+                        + ". Atiende el chat humano en LIWA."
+                    )[:500],
+                    "at": "ahora",
+                    "source": "liwa_bridge",
+                },
+            )
+            actions.append("bridge_note_appended")
+            synced = True
+        else:
+            synced = True
+            actions.append("already_synced")
+
+    return {
+        "ok": bool(state.get("ok")),
+        "conversation_id": conversation_id,
+        "phone": phone,
+        "live_chat": bool(state.get("live_chat")),
+        "handoff_detected": bool(state.get("handoff_detected")),
+        "tags": state.get("tags") or [],
+        "handoff_tags": state.get("handoff_tags") or [],
+        "agency_hint": state.get("agency_hint"),
+        "contact_id": state.get("contact_id"),
+        "mode": state.get("mode") or "bot",
+        "inbox_url": state.get("inbox_url") or "https://chat.liwa.co/?acc=1656233",
+        "synced": synced,
+        "actions": actions,
+        "crm": crm,
+        "error": state.get("error"),
+    }
 
 
 class ConversationClaimBody(BaseModel):
@@ -1072,7 +1424,12 @@ async def claim_conversation(
         "owner_subject": ctx.subject,
         "status": "human_control",
     }
-    return ops_store.upsert_conversation_claim(claim)
+    result = ops_store.upsert_conversation_claim(claim)
+    claimed_handoffs = ops_store.claim_handoffs_for_conversation(
+        body.conversation_id,
+        advisor=body.advisor or ctx.subject,
+    )
+    return {**result, "handoffs_claimed": len(claimed_handoffs)}
 
 
 class ConversationReleaseBody(BaseModel):
@@ -1132,12 +1489,66 @@ async def post_conversation_message(
         "source": body.role,
         "author_subject": ctx.subject,
     }
+    delivery = "persisted_local"
+    channel_acked = False
+    liwa_meta: dict[str, Any] | None = None
+
+    if body.role == "advisor":
+        thread = next(
+            (
+                t
+                for t in ops_store.list_conversation_threads()
+                if t.get("id") == body.conversation_id
+            ),
+            None,
+        )
+        phone = str((thread or {}).get("expediente", {}).get("phone") or "").strip()
+        first_name = str((thread or {}).get("name") or "Asociado")
+        settings = get_settings()
+        if phone and settings.liwa_live_enabled():
+            decision = compliance_service.evaluate(phone=phone, channel="whatsapp")
+            if not decision.allowed:
+                raise PlatformError(
+                    "compliance_blocked",
+                    "; ".join(decision.reasons) or "Contact blocked",
+                    status_code=403,
+                )
+            liwa_res = await liwa_whatsapp_service.send_text(
+                phone=phone,
+                text=body.text,
+                first_name=first_name,
+            )
+            liwa_meta = liwa_res
+            raw_entry = (liwa_res or {}).get("message")
+            entry: dict[str, Any] = raw_entry if isinstance(raw_entry, dict) else {}
+            # LIWA often returns HTTP 200 without receipt_id → accepted_pending.
+            # Success = status sent|accepted_pending (do not require ok flag alone).
+            wa_status = str(entry.get("status") or liwa_res.get("delivery") or "")
+            if wa_status in {"sent", "accepted_pending"}:
+                delivery = "liwa_whatsapp"
+                channel_acked = wa_status == "sent"
+                receipt = entry.get("receipt_id")
+                if receipt is not None:
+                    msg["receipt_id"] = str(receipt)
+            else:
+                raise PlatformError(
+                    "liwa_send_failed",
+                    str(liwa_res.get("error") or entry.get("error") or "LIWA send failed"),
+                    status_code=502,
+                    details={"liwa": liwa_res},
+                )
+        elif phone and not settings.liwa_live_enabled():
+            delivery = "mock_local"
+            channel_acked = False
+            msg["note"] = "LIWA_MODE not real — message stored locally only"
+
     saved = ops_store.append_conversation_message(body.conversation_id, msg)
     return {
         "ok": True,
         "message": saved,
-        "delivery": "persisted_local",
-        "channel_acked": False,
+        "delivery": delivery,
+        "channel_acked": channel_acked,
+        "liwa": liwa_meta,
     }
 
 
@@ -1300,7 +1711,7 @@ async def get_report(
 @router.get("/settings")
 async def get_settings_api(_ctx: AuthContext = Depends(require_ops_auth)) -> dict[str, Any]:
     stored = ops_store.all_settings()
-    ui_defaults: dict[str, Any] = {"pii_masking": True}
+    ui_defaults: dict[str, Any] = {"pii_masking": True, "meta_contactos_hoy": 0}
     s = get_settings()
     defaults: dict[str, Any] = {
         "channels": {
@@ -1460,7 +1871,25 @@ async def put_settings(
         prev = ops_store.get_setting("ui") or {}
         if not isinstance(prev, dict):
             prev = {}
-        ops_store.set_setting("ui", {**prev, **body.ui})
+        allowed_ui = {"pii_masking", "meta_contactos_hoy"}
+        incoming = {k: v for k, v in body.ui.items() if k in allowed_ui}
+        if "meta_contactos_hoy" in incoming:
+            try:
+                meta_n = int(incoming["meta_contactos_hoy"])
+            except (TypeError, ValueError) as exc:
+                raise PlatformError(
+                    "validation_error",
+                    "meta_contactos_hoy must be an integer >= 0",
+                    status_code=422,
+                ) from exc
+            if meta_n < 0:
+                raise PlatformError(
+                    "validation_error",
+                    "meta_contactos_hoy must be >= 0",
+                    status_code=422,
+                )
+            incoming["meta_contactos_hoy"] = meta_n
+        ops_store.set_setting("ui", {**prev, **incoming})
     return await get_settings_api(_ctx)
 
 
@@ -1693,7 +2122,7 @@ async def _e2e_campaign(
         raise
     except Exception as exc:  # noqa: BLE001
         saga["status"] = "failed"
-        saga["error"] = str(exc)[:200]
+        saga["error"] = type(exc).__name__[:80]
         saga["steps"] = steps
         ops_store.save_saga(saga)
         raise
