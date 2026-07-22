@@ -113,5 +113,5 @@ uvicorn==0.51.0
     # via platform-kit (packages/platform-kit/pyproject.toml)
 watchfiles==1.2.0
     # via uvicorn
-websockets==16.1
+websockets==16.1.1
     # via uvicorn
