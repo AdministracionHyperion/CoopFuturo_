@@ -29,7 +29,7 @@ cryptography==49.0.0
     # via
     #   platform-kit (packages/platform-kit/pyproject.toml)
     #   pyjwt
-fastapi==0.139.0
+fastapi==0.139.2
     # via platform-kit (packages/platform-kit/pyproject.toml)
 greenlet==3.5.3
     # via sqlalchemy
