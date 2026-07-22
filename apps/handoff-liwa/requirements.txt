@@ -15,7 +15,7 @@ anyio==4.14.2
     #   watchfiles
 asyncpg==0.31.0
     # via platform-kit (packages/platform-kit/pyproject.toml)
-certifi==2026.6.17
+certifi==2026.7.22
     # via
     #   httpcore
     #   httpx
