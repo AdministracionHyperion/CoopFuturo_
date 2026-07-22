@@ -31,7 +31,7 @@ cryptography==49.0.0
     #   pyjwt
 fastapi==0.139.0
     # via platform-kit (packages/platform-kit/pyproject.toml)
-greenlet==3.5.3
+greenlet==3.5.4
     # via sqlalchemy
 h11==0.16.0
     # via
