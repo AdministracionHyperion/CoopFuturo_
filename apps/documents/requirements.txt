@@ -56,7 +56,7 @@ opentelemetry-api==1.43.0
     #   platform-kit (packages/platform-kit/pyproject.toml)
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-sdk==1.43.0
+opentelemetry-sdk==1.44.0
     # via platform-kit (packages/platform-kit/pyproject.toml)
 opentelemetry-semantic-conventions==0.64b0
     # via opentelemetry-sdk
