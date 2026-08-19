@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.12.10-slim-bookworm AS builder
+FROM python:3.14.7-slim-bookworm AS builder
 WORKDIR /build
 RUN apt-get update \
  && apt-get upgrade -y --no-install-recommends \
@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir --prefix=/install /build/packages/platform-kit \
  && pip install --no-cache-dir --prefix=/install --no-deps /build \
  && PYTHONPATH=/install/lib/python3.12/site-packages python -c "import platform_kit; print(platform_kit.__file__)"
 
-FROM python:3.12.10-slim-bookworm AS runtime
+FROM python:3.14.7-slim-bookworm AS runtime
 RUN apt-get update \
  && apt-get upgrade -y --no-install-recommends \
  && apt-get install -y --no-install-recommends curl \
