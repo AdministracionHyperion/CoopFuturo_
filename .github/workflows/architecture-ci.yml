@@ -170,7 +170,7 @@ jobs:
           upload: never
           output: results
       - name: Upload SARIF artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: codeql-sarif
           path: results
@@ -271,7 +271,7 @@ jobs:
               "$img"
           done
       - name: Upload SBOM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: image-sboms
           path: sbom/*.cdx.json
